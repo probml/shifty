@@ -1,0 +1,6 @@
+__pycache__/
+*.vscode
+*.ipynb_checkpoints
+*.pyc
+*.egg-info/
+shifty/_version.py

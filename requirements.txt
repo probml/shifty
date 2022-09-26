@@ -1,1 +1,12 @@
 numpy
+jax
+jaxlib
+optax
+chex
+tensorflow_probability
+matplotlib
+seaborn
+tqdm
+flax
+scikit-learn
+blackjax
