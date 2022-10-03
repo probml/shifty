@@ -17,6 +17,7 @@ import jax.scipy as jsp
 import jax.numpy as jnp
 from jax import vmap, grad, jit
 import chex
+import typing
 
 from tensorflow_probability.substrates import jax as tfp
 
@@ -48,107 +49,155 @@ class MetaParams: # these determine the sizeshape of the model
     nmix: int = 4 # nclasses * nfactors
 
 
-def class_cond_params_nurd(m, nurd_params, meta_params):  
-    # returns parameters for distribution p(x|m=(y,z))
-    yz = jnp.unravel_index(m, (meta_params.nclasses, meta_params.nfactors))
-    y, z = yz[0], yz[1]
+def class_cond_params_nurd(z, nurd_params, meta_params):  
+    # returns parameters for distribution p(x|m=(y,a))
+    ya = jnp.unravel_index(z, (meta_params.nclasses, meta_params.nfactors))
+    y, a = ya[0], ya[1]
     b, sf = nurd_params.b, nurd_params.sf
-    ysigned, zsigned = 2.0*y-1,  2.0*z-1 #   # convert from (0,1) to (-1,1)
-    mu = jnp.array([ysigned - b*zsigned, ysigned + b*zsigned])
+    ysigned, asigned = 2.0*y-1,  2.0*a-1 #   # convert from (0,1) to (-1,1)
+    mu = jnp.array([ysigned - b*asigned, ysigned + b*asigned])
     Sigma = sf*jnp.diag(jnp.array([1.5, 0.5]))
     return mu, Sigma
 
-def lik_fn_nurd(m, X, nurd_params, meta_params):
-    # returns p(X(n,:) | m) as (N,1) vector
-    mu, Sigma = class_cond_params_nurd(m, nurd_params, meta_params)
+def lik_fn_nurd(z, X, nurd_params, meta_params):
+    # returns p(X(n,:) | z) as (N,1) vector
+    mu, Sigma = class_cond_params_nurd(z, nurd_params, meta_params)
     return jsp.stats.multivariate_normal.pdf(X, mu, Sigma)
 
 def sample_data_nurd(key, nsamples, prior, nurd_params, meta_params):
     labels = jr.categorical(key, logits=jnp.log(prior), shape=(nsamples,))
-    def f(m):
-        return class_cond_params_nurd(m, nurd_params, meta_params)
+    def f(z):
+        return class_cond_params_nurd(z, nurd_params, meta_params)
     mus, Sigmas = vmap(f)(jnp.arange(meta_params.nmix))
     X = jr.multivariate_normal(key, mus[labels], Sigmas[labels])
     return X, labels
 
+def data_generator_nurd(key, n, prior, nurd_params, meta_params):
+    XX, ZZ = sample_data_nurd(key, n, prior, nurd_params, meta_params)
+    def lik_fn(z, X):
+        return lik_fn_nurd(z, X, nurd_params, meta_params)
+    ypost, zpost = predict_bayes(prior, lik_fn, XX, meta_params)
+    return XX, ZZ, ypost
 
 def make_prior(rho, meta_params):
-    p_class =  np.array([0.5, 0.5]) # uniform prior  on p(y) = (-1, +1)
-    p_factor_given_class = np.zeros((2, 2))  # p(z|c) = p_factor(c,z) so each row sums to 1
-    p_factor_given_class[0, :] = [1 - rho, rho]
-    p_factor_given_class[1, :] = [rho, 1 - rho]
-    pmix = jnp.einsum('y,yz->yz', p_class, p_factor_given_class)
-    pmix = einops.rearrange(pmix, 'y z -> (y z)')
+    p_class =  jnp.array([0.5, 0.5]) # uniform prior  on p(y) = (-1, +1)
+    p_factor_given_class = jnp.array([ [1-rho, rho], [rho, 1-rho]])
+    pmix = jnp.einsum('y,ya->ya', p_class, p_factor_given_class) # pmiz(y,a)=p(y)*p(a|y)
+    pmix = einops.rearrange(pmix, 'y a -> (y a)')
     return pmix
 
-def compute_class_post_from_joint(mix_post, meta_params):
-    mix_post = einops.rearrange(mix_post, 'n (y z) -> n y z', y=meta_params.nclasses, z=meta_params.nfactors)
-    class_post = einops.reduce(mix_post, 'n y z -> n y', 'sum') 
+def compute_class_post_from_zpost(z_post, meta_params):
+    z_post = einops.rearrange(z_post, 'n (y a) -> n y a', y=meta_params.nclasses, a=meta_params.nfactors)
+    class_post = einops.reduce(z_post, 'n y a -> n y', 'sum') 
     return class_post
 
 def predict_bayes(prior, lik_fn, X, meta_params):  
     liks = vmap(partial(lik_fn, X=X))(jnp.arange(meta_params.nmix)) # (K,N)
     joint = jnp.einsum('kn,k -> nk', liks, prior) # joint(n,k) = liks(k,n) * prior(k)
     norm = joint.sum(axis=1)
-    joint_post = joint / jnp.expand_dims(norm, axis=1) # joint_post(n,k) = p(mix = k | xn)
-    class_post = compute_class_post_from_joint(joint_post, meta_params)
-    return class_post
+    zpost = joint / jnp.expand_dims(norm, axis=1) # joint_post(n,k) = p(z) = k | xn)
+    ypost = compute_class_post_from_zpost(zpost, meta_params)
+    return ypost, zpost
 
-def predict_source(classifier, X, meta_params):
-    joint_post = classifier.predict_proba(X) 
-    return compute_class_post_from_joint(joint_post, meta_params)
 
-def fit_source(key, X, joint_labels, discrim_params):
+
+def fit_classifier(key, X, Z, meta_params):
     classifier = Pipeline([
             ('standardscaler', StandardScaler()),
-            ('poly', PolynomialFeatures(degree=discrim_params.poly_degree)), 
-            ('logreg', LogisticRegression(random_state=0, max_iter=discrim_params.max_iter))])
-    classifier.fit(X, joint_labels)
-    probs_joint = classifier.predict_proba(X) # (n,m)
-    prior_joint = jnp.mean(probs_joint, axis=0) # prior(m) = empirical fraction of times m is predicted
-    return classifier, prior_joint
+            ('poly', PolynomialFeatures(degree=2)), 
+            ('logreg', LogisticRegression(random_state=0, max_iter=100))])
+    classifier.fit(X, Z)
+    return classifier
 
 
-def classifier_to_lik_fn(classifier, prior):
-    def lik_fn(m, X):
-        # return p_s(x(n) | m) = p_s(m|x) p_s(x) / p_s(m) propto p_s(m|x) / p_s(m)
-        probs = jnp.array(classifier.predict_proba(X))
-        probs = probs[:,m] / prior[m]
+def predict_classifier(classifier, X, meta_params):
+    zpost = classifier.predict_proba(X) # (N,Z)
+    ypost = compute_class_post_from_zpost(zpost, meta_params)
+    return ypost, zpost
+
+def classifier_to_lik_fn(classifier, prior, meta_params):
+    def lik_fn(z, X):
+        # return p_s(x(n) | z) = p_s(z|x) p_s(x) / p_s(z) propto p_s(z|x) / p_s(z)
+        Yprobs, Zprobs = predict_classifier(classifier, X, meta_params)
+        probs = Zprobs[:,z] / prior[z]
         return probs
     return lik_fn
 
-def predict_target(prior, classifier, X, meta_params):
-    lik_fn = classifier_to_lik_fn(classifier)
-    return predict_bayes(prior, lik_fn, X, meta_params)
+def em(X, init_dist, lik_fn, meta_params):
+  target_dist = init_dist
+  pseudo_counts = 0.01 * init_dist
+  niter = 5
+  for t in range(niter):
+    # E step
+    ypost, zpost = predict_bayes(target_dist, lik_fn, X, meta_params) # zpost(n,k) = p(zn=k) 
+    # M step
+    counts = zpost + jnp.reshape(pseudo_counts, (1, meta_params.nmix)) 
+    counts = einops.reduce(zpost, 'n k -> k', 'sum') # counts(k) = sum_n (zpost(n,k)+pseudo(k))
+    target_dist = counts / jnp.sum(counts)
+  return target_dist
 
 
 
-def fit_target(key, model, unlabeled_data):
-    #model = update(model, unlabeled_data)
-    return model
+def mse(u, v):
+  return jnp.mean(jnp.power(u-v, 2))
 
 
-def evaluate_preds(class_post_true, class_post_pred):
-  # we use mean squared error on class 0 (could also use AUC)
-  return jnp.mean(jnp.power(class_post_true[:,0] - class_post_pred[:,0], 2))
+@chex.dataclass
+class SourceModel:
+    prior: typing.Any 
+    classifier: typing.Any 
 
-def eval_single_target(key, corr_target, lik_fn, model):
-    prior_target = make_prior(corr_target)
-    nsamples_target = 100
-    data_target = sample_data(key, prior_target, lik_fn, nsamples_target)
-    model = fit_target(key, model, data_target)
-    probs_pred = predict_target(model, data_target)
-    probs_true = predict_bayes(prior_target, lik_fn, data_target)
-    loss = evaluate_preds(probs_true, probs_pred)
-    return loss
 
-def eval_multi_target(key, corr_source, corr_targets, lik_fn):
-    prior_source = make_prior(corr_source)
+def target_predict_unadapted(key, X, source_model, prior_target, meta_params):
+    return predict_classifier(source_model.classifier, X, meta_params)
+
+def target_predict_bayes(key, X, source_model, prior_target, meta_params):
+    lik_fn = classifier_to_lik_fn(source_model.classifier, source_model.prior, meta_params)
+    ypost, zpost = predict_bayes(prior_target, lik_fn, X, meta_params)
+    return ypost
+
+def target_fit_unadapted(key, X, source_model, meta_params):
+    return source_model.prior
+
+def target_fit_em(key, X, source_model, meta_params):
+    lik_fn = classifier_to_lik_fn(source_model.classifier, source_model.prior, meta_params)
+    target_prior = em(X, source_model.prior, lik_fn, meta_params)
+    return target_prior
+
+def source_fit_classifier(key, X, Z, meta_params):
+    classifier = fit_classifier(key, X, Z, meta_params)
+    probsY, probsZ = predict_classifier(classifier, X, meta_params)
+    priorZ = jnp.mean(probsZ, axis=0) # prior(mz = empirical fraction of times z is predicted
+    return SourceModel(classifier=classifier, prior=priorZ)
+
+
+def eval_single_target(key_base, corr_target, data_generator_fn, source_model,
+                        target_fit_fn, target_predict_fn, meta_params):
+    prior_target_true = make_prior(corr_target, meta_params)
+    nsamples_target = 500
+    key, key_base = jr.split(key_base, 2)
+    X, Z, Yprobs_true = data_generator_fn(key, nsamples_target, prior_target_true)
+    prior_target_est = target_fit_fn(key, X, source_model, meta_params)
+    Yprobs_pred = target_predict_fn(key, X, source_model, prior_target_est, meta_params)
+    mse_probs = mse(Yprobs_true[:,0], Yprobs_pred[:,0])
+    mse_prior = mse(prior_target_true, prior_target_est)
+    return jnp.array([mse_probs, mse_prior])
+
+def eval_multi_target(key_base, corr_source, corr_targets, data_generator_fn, source_fit_fn, target_fit_fn, target_predict_fn, meta_params):
+    prior_source = make_prior(corr_source, meta_params)
     nsamples_source = 500
-    data_source = sample_data(key, prior_source, lik_fn, nsamples_source)
-    model = fit_source(key, data_source)
+    key, key_base = jr.split(key_base, 2)
+    X, Z, _ = data_generator_fn(key, nsamples_source, prior_source)
+    key, key_base = jr.split(key_base, 2)
+    source_model = source_fit_fn(key, X, Z, meta_params)
+    key, key_base = jr.split(key_base, 2)
     def f(corr_target):
-        return eval_single_target(key, corr_target, lik_fn, model)
-    losses = vmap(f)(corr_targets)
-    return losses
+        return eval_single_target(key, corr_target, data_generator_fn, source_model, target_fit_fn, target_predict_fn, meta_params)
+    #losses = vmap(f)(corr_targets)
+    losses = []
+    for i, corr_target in enumerate(corr_targets):
+        loss = f(corr_target)
+        print(loss)
+        losses.append(loss)
 
+    return losses
