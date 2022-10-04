@@ -79,12 +79,22 @@ def sample_data_nurd(key, nsamples, prior, nurd_params):
     return X, labels
 
 @partial(jax.jit, static_argnames=["nsamples"])
-def data_generator_nurd(key, n, prior, nurd_params):
-    XX, ZZ = sample_data_nurd(key, n, prior, nurd_params)
+def data_generator_nurd(key, nsamples, prior, nurd_params):
+    XX, ZZ = sample_data_nurd(key, nsamples, prior, nurd_params)
     def lik_fn(z, X):
         return lik_fn_nurd(z, X, nurd_params)
-    ypost, zpost = predict_bayes(prior, lik_fn, XX)
+    #ypost, zpost = predict_bayes(prior, lik_fn, XX)
+    ypost, zpost = predict_bayes(prior, partial(lik_fn_nurd, nurd_params=nurd_params), XX)
     return XX, ZZ, ypost
+
+@partial(jax.jit, static_argnames=["lik_fn"])
+def predict_bayes(prior, lik_fn, X):  
+    liks = vmap(partial(lik_fn, X=X))(jnp.arange(nmix)) # liks(k,n)=p(X(n,:) | z=k)
+    joint = jnp.einsum('kn,k -> nk', liks, prior) # joint(n,k) = liks(k,n) * prior(k)
+    norm = joint.sum(axis=1)
+    zpost = joint / jnp.expand_dims(norm, axis=1) # zpost(n,k) = p(z) = k | xn)
+    ypost = compute_class_post_from_zpost(zpost)
+    return ypost, zpost
 
 @partial(jax.jit)
 def make_prior(rho):
@@ -100,16 +110,7 @@ def compute_class_post_from_zpost(z_post):
     class_post = einops.reduce(z_post, 'n y a -> n y', 'sum') 
     return class_post
 
-@partial(jax.jit)
-def predict_bayes(prior, lik_fn, X):  
-    liks = vmap(partial(lik_fn, X=X))(jnp.arange(nmix)) # (K,N)
-    joint = jnp.einsum('kn,k -> nk', liks, prior) # joint(n,k) = liks(k,n) * prior(k)
-    norm = joint.sum(axis=1)
-    zpost = joint / jnp.expand_dims(norm, axis=1) # joint_post(n,k) = p(z) = k | xn)
-    ypost = compute_class_post_from_zpost(zpost)
-    return ypost, zpost
 
-@partial(jax.jit)
 def fit_classifier(key, X, Z):
     classifier = Pipeline([
             ('standardscaler', StandardScaler()),
@@ -118,13 +119,13 @@ def fit_classifier(key, X, Z):
     classifier.fit(np.array(X), np.array(Z))
     return classifier
 
-@partial(jax.jit, static_argnames=["classifier"])
+@partial(jax.jit)
 def predict_classifier(classifier, X):
     zpost = jnp.array(classifier.predict_proba(X)) # (N,Z)
     ypost = compute_class_post_from_zpost(zpost)
     return ypost, zpost
 
-@partial(jax.jit, static_argnames=["classifier"])
+@partial(jax.jit)
 def classifier_to_lik_fn(classifier, prior):
     def lik_fn(z, X):
         # return p_s(x(n) | z) = p_s(z|x) p_s(x) / p_s(z) propto p_s(z|x) / p_s(z)
@@ -157,12 +158,12 @@ class SourceModelOld:
     prior: typing.Any 
     classifier: typing.Any 
 
-@partial(jax.jit, static_argnames=["classifier"])
+@partial(jax.jit)
 def target_predict_unadapted(key, X, source_prior, classifier, target_prior):
     ypost, zpost =  predict_classifier(classifier, X)
     return ypost
 
-@partial(jax.jit, static_argnames=["classifier"])
+@partial(jax.jit)
 def target_predict_bayes(key, X, source_prior, classifier, target_prior):
     lik_fn = classifier_to_lik_fn(classifier, source_prior)
     ypost, zpost = predict_bayes(target_prior, lik_fn, X)
@@ -172,20 +173,19 @@ def target_predict_bayes(key, X, source_prior, classifier, target_prior):
 def target_fit_unadapted(key, X, source_prior, classifier):
     return source_prior
 
-@partial(jax.jit, static_argnames=["classifier"])
+@partial(jax.jit)
 def target_fit_em(key, X, source_prior, classifier):
     lik_fn = classifier_to_lik_fn(classifier, source_prior)
     target_prior = em(X, source_prior, lik_fn)
     return target_prior
 
-@partial(jax.jit)
 def source_fit_classifier(key, X, Z):
     classifier = fit_classifier(key, X, Z)
     probsY, probsZ = predict_classifier(classifier, X)
     priorZ = jnp.mean(probsZ, axis=0) # prior(mz = empirical fraction of times z is predicted
     return priorZ, classifier
 
-@partial(jax.jit, static_argnames=["classifier"])
+@partial(jax.jit)
 def eval_single_target(key_base, corr_target, data_generator_fn, source_prior, classifier,
                         target_fit_fn, target_predict_fn):
     prior_target_true = make_prior(corr_target)
@@ -198,7 +198,6 @@ def eval_single_target(key_base, corr_target, data_generator_fn, source_prior, c
     mse_prior = mse(prior_target_true, prior_target_est)
     return jnp.array([mse_probs, mse_prior])
 
-@partial(jax.jit)
 def eval_multi_target(key_base, corr_source, corr_targets, data_generator_fn, source_fit_fn,
                     target_fit_fn, target_predict_fn):
     prior_source = make_prior(corr_source)
