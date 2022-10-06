@@ -165,4 +165,9 @@ def test_polyak():
     compare_method("polyak", name="polyak, bs=32", batch_size=32)
 
 def test_armijo():
-    compare_method("armijo", name="polyak, bs=32", batch_size=32)
+    compare_method("armijo", name="armijo, bs=32", batch_size=32)
+
+def test_armijo_full_batch():
+    X, y = make_test_data()
+    ntrain = X.shape[0]
+    compare_method("armijo", name="armijo, bs=N", batch_size=ntrain)
