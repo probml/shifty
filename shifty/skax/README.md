@@ -1,1 +1,2 @@
-# skax is sklearn in JAX, similar to skorch (which is sklearn in torch) 
+
+# skax is to JAX what skorch is to torch, ie. it creates neural net classifiers with an sklearn API
