@@ -1,3 +1,6 @@
+# to show output from the 'tests', run with 
+# pytest logreg_flax_test.py  -rP
+
 from functools import partial
 import matplotlib.pyplot as plt
 import numpy as np
@@ -82,7 +85,8 @@ def skip_test_training():
     probs = np.array(model.predict(X))
     assert np.allclose(probs, true_probs, atol=1e-2)
 
-def test_objectives():
+
+def skip_test_objectives():
     # compare logprior to the l2 regularizer
     X, y = make_test_data()
     ndata, ndim = X.shape
@@ -136,6 +140,7 @@ def test_pipeline():
     assert np.allclose(probs, true_probs, atol=1e-2)
 
 
+
 def compare_method(optimizer, name=None, batch_size=None, max_iter=500):
     X, y = make_test_data()
     true_probs, W_mle, b_mle = compute_mle(X, y)
@@ -153,18 +158,41 @@ def compare_method(optimizer, name=None, batch_size=None, max_iter=500):
 def test_bfgs():
     compare_method("lbfgs", name= "lbfgs")
 
-def test_adam_full_batch():
+def test_adam_full_batch_2():
     X, y = make_test_data()
     ntrain = X.shape[0]
-    compare_method(optax.adam(0.01), name="adam 0.01, bs=N", batch_size=ntrain)
+    compare_method(optax.adam(1e-2), name="adam 1e-2, bs=N", batch_size=ntrain)
 
-def test_adam():
-    compare_method(optax.adam(0.01), name="adam 0.01, bs=32", batch_size=32)
+def test_adam_full_batch_3():
+    X, y = make_test_data()
+    ntrain = X.shape[0]
+    compare_method(optax.adam(1e-3), name="adam 1e-3, bs=N", batch_size=ntrain)
 
-def test_polyak():
+def test_adam_full_batch_4():
+    X, y = make_test_data()
+    ntrain = X.shape[0]
+    compare_method(optax.adam(1e-4), name="adam 1e-4, bs=N", batch_size=ntrain)
+
+
+def test_adam_minibatch_2():
+    compare_method(optax.adam(1e-2), name="adam 1e-2, bs=32", batch_size=32)
+
+def test_adam_minibatch_3():
+    compare_method(optax.adam(1e-3), name="adam 1e-3, bs=32", batch_size=32)
+
+def test_adam_minibatch_4():
+    compare_method(optax.adam(1e-4), name="adam 1e-4, bs=32", batch_size=32)
+
+
+def test_polyak_minibatch():
     compare_method("polyak", name="polyak, bs=32", batch_size=32)
 
-def test_armijo():
+def test_polyak_full_batch():
+    X, y = make_test_data()
+    ntrain = X.shape[0]
+    compare_method("polyak", name="polyak, bs=N", batch_size=ntrain)
+
+def test_armijo_minibatch():
     compare_method("armijo", name="armijo, bs=32", batch_size=32)
 
 def test_armijo_full_batch():
