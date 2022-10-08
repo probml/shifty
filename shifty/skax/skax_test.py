@@ -41,7 +41,8 @@ from sklearn.linear_model import LogisticRegression
 from skax import *
 #jax.config.update("jax_enable_x64", True) # jaxopt.lbfgs uses float32
 
-def make_test_data():
+
+def make_test_data(key):
     iris = sklearn.datasets.load_iris()
     X = iris["data"]
     #y = (iris["target"] == 2).astype(np.int)  # 1 if Iris-Virginica, else 0'
@@ -49,9 +50,12 @@ def make_test_data():
     nclasses = len(np.unique(y)) # 
     ndata, ndim = X.shape  # 150, 4
     key = jr.PRNGKey(0)
-    noise = jr.normal(key, (ndata, ndim)) * 2
+    noise = jr.normal(key, (ndata, ndim)) * 2.0
     X = X + noise # add noise to make the classes less separable
     #X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=42)
+    X = np.array(X)
+    perm = jr.permutation(key, ndata)
+    X, y = X[perm], y[perm]
     return X, y
 
 def compute_mle(X, y):
@@ -66,10 +70,10 @@ def compute_mle(X, y):
 
 
 def compare_method(optimizer, name=None, batch_size=None, max_iter=500):
-    X, y = make_test_data()
+    key = jr.PRNGKey(0)
+    X, y = make_test_data(key)
     true_probs, W_mle, b_mle = compute_mle(X, y)
     nclasses, ndim = W_mle.shape
-    key = jr.PRNGKey(0)
     l2reg = 1e-5
     #network = LogRegNetwork(nclasses = nclasses)
     #network = MLPNetwork((5, nclasses,))
@@ -89,13 +93,11 @@ def test_bfgs():
 def test_adam_full_batch():
     X, y = make_test_data()
     ntrain = X.shape[0]
-    compare_method(optax.adam(0.01), name="adam 0.01, bs=N", batch_size=ntrain)
+    compare_method(optax.adam(1e-3), name="adam 1e-3, bs=N", batch_size=ntrain)
 
 def test_adam():
-    compare_method(optax.adam(0.01), name="adam 0.01, bs=32", batch_size=32)
+    compare_method(optax.adam(1e-3), name="adam 1e-3, bs=32", batch_size=32)
 
-def test_polyak():
-    compare_method("polyak", name="polyak, bs=32", batch_size=32)
 
 def test_armijo():
     compare_method("armijo", name="armijo, bs=32", batch_size=32)
