@@ -101,7 +101,7 @@ class MLPNetwork(nn.Module):
 class NeuralNetClassifier(ClassifierMixin):
     def __init__(self, network, key, nclasses, *,  l2reg=1e-5, standardize = True,
                 optimizer = 'lbfgs', batch_size=128, max_iter=1000, num_epochs=10, print_every=5):
-        # optimizer is {'lbfgs', 'polyak', 'armijo'} or an optax object
+        # optimizer is {'lbfgs', 'polyak', 'armijo', 'adam+warmup'} or an optax object
         self.nclasses = nclasses
         self.network = network
         self.standardize = standardize
@@ -122,8 +122,8 @@ class NeuralNetClassifier(ClassifierMixin):
 
     def fit(self, X, y):
         if self.params is None:
-            ninputs = X.shape[1]
-            x = jr.normal(self.key, (ninputs,)) # single random input 
+            nfeatures = X.shape[1]
+            x = jr.normal(self.key, (nfeatures,)) # single random input 
             self.params = self.network.init(self.key, x)
         if self.standardize:
             self.mean = jnp.mean(X, axis=0)

@@ -112,10 +112,10 @@ class LogReg(ClassifierMixin):
 
     def fit_batch(self, key, X, y):
         sigma = np.sqrt(1/self.l2reg)
-        N = X.shape[0]
+        ntrain = X.shape[0]
         data = {"X": X, "y": y}
         def loss_fn(params):
-            return objective(params=params, data=data,  network=self.network,  prior_sigma=sigma, ntrain=N)
+            return objective(params=params, data=data,  network=self.network,  prior_sigma=sigma, ntrain=ntrain)
         solver = jaxopt.LBFGS(fun=loss_fn, maxiter=self.max_iter)
         res = solver.run(self.params)
         self.params = res.params
