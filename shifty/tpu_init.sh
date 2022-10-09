@@ -6,15 +6,15 @@ bash Mambaforge-$(uname)-$(uname -m).sh
 #exec bash
 
 # Install Jax, tfp, and github
-#pip install "jax[tpu]>=0.2.16" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-pip install "jax[tpu]==0.3.17" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+#pip install "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+#pip install "jax[tpu]==0.3.17" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
 # v 0.3.19 crashes on tpu
 #https://github.com/google/jax/issues/12550
 
 
 pip install -Uq "tfp-nightly[jax]" 
-mamba install -y gh
+#mamba install -y gh
 
 # Jupyterlab things
 mamba install -y jupyterlab
