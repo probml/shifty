@@ -41,7 +41,11 @@ from sklearn.linear_model import LogisticRegression
 from logreg_flax import *
 #jax.config.update("jax_enable_x64", True) # jaxopt.lbfgs uses float32
 
-def make_test_data():
+def print_probs(probs):
+    str = ['{:0.3f}'.format(p) for p in probs]
+    print(str)
+
+def make_iris_data():
     iris = sklearn.datasets.load_iris()
     X = iris["data"]
     #y = (iris["target"] == 2).astype(np.int)  # 1 if Iris-Virginica, else 0'
@@ -66,7 +70,7 @@ def compute_mle(X, y):
 
 def test_inference():
     # test inference at the MLE params
-    X, y = make_test_data()
+    X, y = make_iris_data()
     true_probs, W_mle, b_mle = compute_mle(X, y)
     nclasses, ndim = W_mle.shape
     key = jr.PRNGKey(0)
@@ -76,7 +80,7 @@ def test_inference():
 
 def skip_test_training():
     # this is tested in test_bfgs
-    X, y = make_test_data()
+    X, y = make_iris_data()
     true_probs, W_mle, b_mle = compute_mle(X, y)
     nclasses, ndim = W_mle.shape
     key = jr.PRNGKey(0)
@@ -88,7 +92,7 @@ def skip_test_training():
 
 def skip_test_objectives():
     # compare logprior to the l2 regularizer
-    X, y = make_test_data()
+    X, y = make_iris_data()
     ndata, ndim = X.shape
     nclasses = 3
     key = jr.PRNGKey(0)
@@ -117,7 +121,6 @@ def fit_pipeline_sklearn(key, X, Y):
     return classifier
 
 def fit_pipeline_logreg(key, X, Y):
-    ndim = X.shape[1]
     nclasses  = len(np.unique(Y))
     classifier = Pipeline([
             ('standardscaler', StandardScaler()),
@@ -128,21 +131,21 @@ def fit_pipeline_logreg(key, X, Y):
     
 
 def test_pipeline():
-    X, y = make_test_data()
+    X, y = make_iris_data()
     key = jr.PRNGKey(0)
     clf = fit_pipeline_sklearn(key, X, y)
     true_probs = clf.predict_proba(X)
     model = fit_pipeline_logreg(key, X, y)
     probs = np.array(model.predict(X))
     print('max deviation from true probs {:.3f}'.format(np.max(true_probs - probs)))
-    print('truth: ', true_probs[0])
-    print('pred: ', probs[0])
+    print('truth'); print_probs(true_probs[0])
+    print('pred'); print_probs(probs[0])
     assert np.allclose(probs, true_probs, atol=1e-2)
 
 
 
 def compare_method(optimizer, name=None, batch_size=None, max_iter=500):
-    X, y = make_test_data()
+    X, y = make_iris_data()
     true_probs, W_mle, b_mle = compute_mle(X, y)
     nclasses, ndim = W_mle.shape
     key = jr.PRNGKey(0)
@@ -154,22 +157,22 @@ def compare_method(optimizer, name=None, batch_size=None, max_iter=500):
     print('truth: ', true_probs[0])
     print('pred: ', probs[0])
 
-
+'''
 def test_bfgs():
     compare_method("lbfgs", name= "lbfgs")
 
 def test_adam_full_batch_2():
-    X, y = make_test_data()
+    X, y = make_iris_data()
     ntrain = X.shape[0]
     compare_method(optax.adam(1e-2), name="adam 1e-2, bs=N", batch_size=ntrain)
 
 def test_adam_full_batch_3():
-    X, y = make_test_data()
+    X, y = make_iris_data()
     ntrain = X.shape[0]
     compare_method(optax.adam(1e-3), name="adam 1e-3, bs=N", batch_size=ntrain)
 
 def test_adam_full_batch_4():
-    X, y = make_test_data()
+    X, y = make_iris_data()
     ntrain = X.shape[0]
     compare_method(optax.adam(1e-4), name="adam 1e-4, bs=N", batch_size=ntrain)
 
@@ -188,7 +191,7 @@ def test_polyak_minibatch():
     compare_method("polyak", name="polyak, bs=32", batch_size=32)
 
 def test_polyak_full_batch():
-    X, y = make_test_data()
+    X, y = make_iris_data()
     ntrain = X.shape[0]
     compare_method("polyak", name="polyak, bs=N", batch_size=ntrain)
 
@@ -196,6 +199,7 @@ def test_armijo_minibatch():
     compare_method("armijo", name="armijo, bs=32", batch_size=32)
 
 def test_armijo_full_batch():
-    X, y = make_test_data()
+    X, y = make_iris_data()
     ntrain = X.shape[0]
     compare_method("armijo", name="armijo, bs=N", batch_size=ntrain)
+'''
