@@ -100,7 +100,7 @@ class MLPNetwork(nn.Module):
 
 class NeuralNetClassifier(ClassifierMixin):
     def __init__(self, network, key, nclasses, *,  l2reg=1e-5, standardize = True,
-                optimizer = 'lbfgs', batch_size=128, max_iter=1000, num_epochs=10, print_every=5):
+                optimizer = 'lbfgs', batch_size=128, max_iter=1000, num_epochs=10, print_every=0):
         # optimizer is {'lbfgs', 'polyak', 'armijo', 'adam+warmup'} or an optax object
         self.nclasses = nclasses
         self.network = network
