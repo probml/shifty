@@ -94,13 +94,14 @@ class MLPNetwork(nn.Module):
     for i, feat in enumerate(self.nfeatures_per_layer):
       x = nn.Dense(feat, name=f'layers_{i}')(x)
       if i != (nlayers - 1):
-        x = nn.relu(x)
+        #x = nn.relu(x)
+        x = nn.gelu(x)
     return x
 
 
 class NeuralNetClassifier(ClassifierMixin):
     def __init__(self, network, key, nclasses, *,  l2reg=1e-5, standardize = True,
-                optimizer = 'lbfgs', batch_size=128, max_iter=1000, num_epochs=10, print_every=0):
+                optimizer = 'lbfgs', batch_size=128, max_iter=100, num_epochs=10, print_every=0):
         # optimizer is {'lbfgs', 'polyak', 'armijo', 'adam+warmup'} or an optax object
         self.nclasses = nclasses
         self.network = network
@@ -115,21 +116,23 @@ class NeuralNetClassifier(ClassifierMixin):
         self.key = key
 
     def predict(self, X):
+        if self.params is None:
+            raise ValueError('need to call fit before predict')
         if self.standardize:
             X = X - self.mean
             X = X / self.std
         return jax.nn.softmax(self.network.apply(self.params, X))
 
     def fit(self, X, y):
-        if self.params is None:
-            nfeatures = X.shape[1]
-            x = jr.normal(self.key, (nfeatures,)) # single random input 
-            self.params = self.network.init(self.key, x)
         if self.standardize:
             self.mean = jnp.mean(X, axis=0)
             self.std = jnp.std(X, axis=0) + 1e-5 
             X = X - self.mean
             X = X / self.std
+        if self.params is None:
+            nfeatures = X.shape[1]
+            x = jr.normal(self.key, (nfeatures,)) # single random input 
+            self.params = self.network.init(self.key, x) 
         ntrain = X.shape[0]
         if isinstance(self.optimizer, str) and (self.optimizer.lower() == "lbfgs"):
             return self.fit_bfgs(self.key, X, y)

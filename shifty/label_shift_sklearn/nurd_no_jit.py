@@ -191,11 +191,10 @@ def eval_multi_target(key_base, corr_source, corr_targets, data_generator_fn, so
     key, key_base = jr.split(key_base, 2)
     def f(corr_target):
         return eval_single_target(key, corr_target, data_generator_fn, source_model, target_fit_fn, target_predict_fn, meta_params)
-    losses = vmap(f)(corr_targets)
-    #losses = []
-    #for i, corr_target in enumerate(corr_targets):
-    #    loss = f(corr_target)
-    #    print(loss)
-    #    losses.append(loss)
+    #losses = vmap(f)(corr_targets)
+    losses = []
+    for i, corr_target in enumerate(corr_targets):
+        loss = f(corr_target)
+        losses.append(loss)
 
     return losses

@@ -42,7 +42,7 @@ class DiscrimParams:
     max_iter: int = 100
 
 @chex.dataclass
-class MetaParamsOld: # these determine the sizeshape of the model
+class MetaParams: # these determine the sizeshape of the model
     ndim: float = 2 # dimensionality of generated X data
     nclasses: int = 2
     nfactors: int = 2 # other attributes
@@ -210,11 +210,11 @@ def eval_multi_target(key_base, corr_source, corr_targets, data_generator_fn, so
     def f(corr_target):
         return eval_single_target(key, corr_target, data_generator_fn, source_prior, classifier,
                             target_fit_fn, target_predict_fn)
-    losses = vmap(f)(corr_targets)
-    #losses = []
-    #for i, corr_target in enumerate(corr_targets):
-    #    loss = f(corr_target)
-    #    print(loss)
-    #    losses.append(loss)
+    #losses = vmap(f)(corr_targets)
+    losses = []
+    for i, corr_target in enumerate(corr_targets):
+        loss = f(corr_target)
+        print(loss)
+        losses.append(loss)
 
     return losses

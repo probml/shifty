@@ -17,60 +17,44 @@ import chex
 import typing
 from copy import deepcopy
 
-
 from shifty.tta.label_space import *
-from shifty.tta.estimators import *
 from shifty.tta.data_generator import *
+from shifty.tta.estimators import *
 from shifty.skax.skax import *
 
-def evaluate_predictions(Ytrue, Yprob):
-  Yhat = jnp.argmax(Yprob, axis=1)
-  nerrors = jnp.sum(Yhat != Ytrue)
-  nsamples = len(Ytrue)
-  return nerrors / nsamples
+def run_expt(corr_source=0.3, ntrials=3, sf=3):
+    corr_targets = np.linspace(0.1, 0.9, num=9)
 
-def evaluate_estimator(key, src_dist, corr_targets, estimator, nsource_samples = 500, ntarget_samples=100):
-    Xs, Ys, As = src_dist.sample(key, nsource_samples)
-    estimator.fit_source(Xs, Ys, As, src_dist)
-    ntargets = len(corr_targets)
-    keys = jr.split(key, ntargets)
-    def f(key_corr):
-        key, corr = key_corr
-        target_dist = deepcopy(src_dist)
-        target_dist.shift_prior_correlation(corr)
-        Xt, Yt, At = target_dist.sample(key, ntarget_samples)
-        estimator.fit_target(Xt, target_dist)
-        Ypred = estimator.predict_target(Xt)
-        return evaluate_predictions(Yt, Ypred)
-    metrics = vmap(f)((keys, corr_targets))
-    return metrics
+    key = jr.PRNGKey(420)
+    keys = jr.split(key, ntrials)
 
-        
-def demo():
-    key = jr.PRNGKey(0)
-    corr_source = 0.1
-    corr_targets = jnp.arange(0.1, 0.9, step=0.1)
     ls = LabelSpace(nclasses=2, nfactors=2)
-    src_dist = GMMDataGenerator(key, corr_source, ls, nfeatures=4)
+    src_dist = NurdDataGenerator(key, corr_source, ls, sf=sf)
+    def make_dist(rho):
+        src_dist = NurdDataGenerator(key, rho, ls, sf=sf)
 
-    nhidden = (10,) + (ls.nclasses,) # set nhidden = () + (ls.classes,) to get logistic regression
-    network = MLPNetwork(nhidden)
-    mlp = NeuralNetClassifier(network, key, ls.nclasses, l2reg=1e-5, optimizer = "adam+warmup", 
-            batch_size=32, num_epochs=20, print_every=0) 
+    clf = make_logreg()
+    #clf = make_mlp()
+    methods = {
+    'oracle': OracleEstimator(ls),
+    'oracle-prior': OraclePriorEstimator(clf, ls),
+    'unadapted': UndaptedEstimator(clf, ls),
+    'em': EMEstimator(clf, ls)
+    }
 
-    est = OracleEstimator(ls)
-    metrics_oracle = evaluate_estimator(key, src_dist, corr_targets, est)
-
-    est = UndaptedEstimator(mlp, ls)
-    metrics_unadapted = evaluate_estimator(key, src_dist, corr_targets, est)
-
-    est = EMEstimator(mlp, ls)
-    metrics_em = evaluate_estimator(key, src_dist, corr_targets, est)
+    losses_mean = {}
+    losses_std = {}
+    for name, estimator in methods.items():
+        print(name)
+        losses_mean[name], losses_std[name] = evaluate_estimator_multi_trial(keys,
+            src_dist, corr_targets, estimator, nsource_samples = 500, ntarget_samples=100)
 
 
-    plt.figure;
-    plt.plot(corr_targets, metrics_oracle, 'b--', label='oracle')
-    plt.plot(corr_targets, metrics_unadapted, 'k:', label='unadapted')
-    plt.plot(corr_targets, metrics_em, 'r-', label='em')
+    plt.figure()
+    for name in methods.keys():
+        plt.errorbar(corr_targets, losses_mean[name], yerr=losses_std[name], marker='o', label=name)
     plt.xlabel('correlation')
-    plt.ylabel('performance')
+    plt.ylabel('Loss')
+    plt.title(r'Source $\rho={:0.1f}$'.format(corr_source))
+    plt.legend()
+    plt.axvline(x=corr_source);

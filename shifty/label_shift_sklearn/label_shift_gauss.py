@@ -251,15 +251,20 @@ def em(Xtarget, init_dist, lik_fn, niter=10, pseudo_counts=np.zeros(4), verbose=
 
 
 class Estimator:
-    def __init__(self, max_classifier_iter=500):
+    def __init__(self, use_poly=True, max_classifier_iter=500):
         self.prior_source = None
         self.prior_target = None
         self.lik_fn = lambda m, xs: self.likelihood_from_classifier(m, xs)
         self.max_classifier_iter = max_classifier_iter
-        self.classifier = Pipeline([
-            ('standardscaler', StandardScaler()),
-            ('poly', PolynomialFeatures(degree=2)), 
-            ('logreg', LogisticRegression(random_state=0, max_iter=self.max_classifier_iter))])
+        self.use_poly = use_poly
+        if self.use_poly:
+            self.classifier = Pipeline([
+                ('standardscaler', StandardScaler()),
+                ('poly', PolynomialFeatures(degree=2)), 
+                ('logreg', LogisticRegression(random_state=0, max_iter=self.max_classifier_iter))])
+        else:
+            self.classifier =  LogisticRegression(random_state=0,
+                max_iter=500, C=1e-5)
 
     def fit_source(self, X, mix_labels, jm=None, key=None):
         self.classifier.fit(X, mix_labels)
@@ -286,8 +291,8 @@ class Estimator:
         return mix_post, class_post
 
 class Estimator_EM(Estimator):
-    def __init__(self,  max_classifier_iter=500, max_em_iter=5, prior_strength=0.01):
-        super().__init__(max_classifier_iter)
+    def __init__(self,  use_poly,  max_em_iter=5, prior_strength=0.01):
+        super().__init__(use_poly)
         self.max_em_iter = max_em_iter
         self.prior_strength = prior_strength
 
@@ -298,24 +303,24 @@ class Estimator_EM(Estimator):
 
 
 class Estimator_True_Prior(Estimator):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, use_poly):
+        super().__init__(use_poly)
     
     def fit_target(self, X, jm_target): # cheat by setting prior target to truth instead of using EM
         self.prior_target = jm_target.prior
 
 
 class Estimator_Unadapted(Estimator):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, use_poly):
+        super().__init__(use_poly)
     
     def predict_target(self, xs): # use source model
         return self.predict_source(xs)
 
 
 class Estimator_Unadapted_UnifSource(Estimator):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, use_poly):
+        super().__init__(use_poly)
     
     def fit_source(self, X_source, mix_labels_source, jm_source, key):
         # generate a new set of training data from a uniform version of the source
@@ -344,7 +349,7 @@ def evaluate_shift(key, lm, rho_source, rho_targets, model,
     # we pass in the true jm_sourcet as a backdoor for oracles
     model.fit_source(X_train_source, mix_train_source, jm_source, key)
 
-    xs, x1, x2 = make_xgrid(npoints = 100)
+    #xs, x1, x2 = make_xgrid(npoints = 100)
     ndomains = len(rho_targets)
     loss_per_domain = np.zeros(ndomains)
     for i in range(ndomains):
@@ -363,7 +368,7 @@ def evaluate_shift(key, lm, rho_source, rho_targets, model,
         loss_per_domain[i] = err
     return loss_per_domain
 
-def run_expt(rho_source=0.3, ntrials=3, sf=3):
+def run_expt(rho_source=0.3, ntrials=3, sf=3, use_poly=True):
     rho_targets = np.linspace(0.1, 0.9, num=9)
     lm = LikModel(b=1, sf=sf)
 
@@ -372,10 +377,10 @@ def run_expt(rho_source=0.3, ntrials=3, sf=3):
     ndomains = len(rho_targets)
 
     methods = {
-        'EM': Estimator_EM(),
-        'TruePrior': Estimator_True_Prior(),
-        'SourceUnadapted': Estimator_Unadapted(),
-        'UnifSourceUnadapted': Estimator_Unadapted_UnifSource()
+        #'EM': Estimator_EM(use_poly),
+        #'TruePrior': Estimator_True_Prior(use_poly),
+        'SourceUnadapted': Estimator_Unadapted(use_poly),
+        #'UnifSourceUnadapted': Estimator_Unadapted_UnifSource(use_poly)
     }
 
     nmethods = len(methods)
@@ -388,6 +393,7 @@ def run_expt(rho_source=0.3, ntrials=3, sf=3):
         for i in range(ntrials):
             losses_per_trial[:, i] =  evaluate_shift(keys[i], lm, rho_source, rho_targets,  estimator)
         losses[name] = losses_per_trial
+        print(losses_per_trial)
         losses_mean[name] = np.mean(losses_per_trial, axis=1)
         losses_std[name] = np.std(losses_per_trial, axis=1)
 

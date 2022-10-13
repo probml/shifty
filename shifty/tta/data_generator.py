@@ -16,10 +16,7 @@ from jax import vmap, grad, jit
 import chex
 import typing
 from copy import deepcopy
-
-from tensorflow_probability.substrates import jax as tfp
-tfd = tfp.distributions
-from tensorflow_probability.substrates.jax.distributions import MultivariateNormalFullCovariance as MVN
+from collections import Counter
 
 from shifty.tta.label_space import *
 
@@ -84,34 +81,17 @@ class GMMDataGenerator:
     def lik_fn(self, z, X):
         return   jsp.stats.multivariate_normal.pdf(X, self.params.mus[z], self.params.Sigmas[z])
 
+    def predict_joint(self, X):
+        return predict_bayes(self.params.prior, self.lik_fn, X)
 
-def test_gmm():
-    key = jr.PRNGKey(0)
-    class_prior = jnp.array([0.3, 0.7])
-    gmm_source = GMMDataGenerator(key, correlation=0.1, nclasses=2, nfactors=2, nfeatures=10, class_prior=class_prior)
-    gmm_target = deepcopy(gmm_source)
-    gmm_target.shift_prior_correlation(0.9)
-    prior_y, prior_a = gmm_source.label_space.unflatten_dist(gmm_source.params.prior)
-    assert np.allclose(prior_y, class_prior)
-    prior_y, prior_a = gmm_target.label_space.unflatten_dist(gmm_target.params.prior)
-    assert np.allclose(prior_y, class_prior)
+    def predict_class(self, X):
+        zpost = self.predict_joint(X)
+        ypost, apost = self.label_space.unflatten_dist(zpost)
+        return ypost 
 
 
 
-def test_gmm2():
-    key = jr.PRNGKey(0)
-    class_prior = jnp.array([0.3, 0.7])
-    gmm = GMMDataGenerator(key, correlation=0.1, nclasses=2, nfactors=2, nfeatures=10, class_prior=class_prior)
-    prior_y, prior_a = gmm.label_space.unflatten_dist(gmm.params.prior)
-    assert np.allclose(prior_y, class_prior)
-
-    n = 1000
-    X, y, a = gmm.sample(key, n)
-    counts = jnp.sum(y==1); prior_y_mle = counts/n;
-    counts = jnp.sum(a==1); prior_a_mle = counts/n;
-
-    assert np.allclose(prior_y_mle, prior_y[1], atol=1e-1)
-    assert np.allclose(prior_a_mle, prior_a[1], atol=1e-1)
+################
 
 # Model from NURD paper:
 # A. M. Puli, L. H. Zhang, E. K. Oermann, and R. Ranganath, 
@@ -128,12 +108,14 @@ def class_cond_params_nurd(z, nclasses, nfactors, b, sf):
     Sigma = sf*jnp.diag(jnp.array([1.5, 0.5]))
     return mu, Sigma
 
+
 class NurdDataGenerator(GMMDataGenerator):
-    def __init__(self, correlation, b=1, sf=1):
+    def __init__(self, key, correlation, label_space, b=1, sf=1):
+        # key is used to generate random GMM parameters in parent, but these are overwritten with deterministic values
         self.correlation = correlation
-        key = jr.PRNGKey(0)
+        assert label_space.nclasses == 2
+        assert label_space.nfactors == 2
         nclasses, nfactors, nmix = 2, 2, 4
-        label_space = LabelSpace(nclasses = nclasses, nfactors = nfactors)
         self.class_prior = jnp.array([0.5,0.5])
         nfeatures = 2
         super().__init__(key, correlation, label_space, nfeatures, class_prior=self.class_prior, noise_factor=1)
@@ -142,5 +124,4 @@ class NurdDataGenerator(GMMDataGenerator):
         mus, Sigmas = vmap(f)(jnp.arange(nmix))
         flat_prior = make_correlated_prior(self.correlation, self.class_prior)
         self.params = GMMParams(nmix=nmix, nfeatures=nfeatures, prior=flat_prior, mus=mus, Sigmas=Sigmas)
-
 

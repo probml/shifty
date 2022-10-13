@@ -17,13 +17,24 @@ import chex
 import typing
 from copy import deepcopy
 
+def predict_bayes(prior, likelihood_fn, X):
+    nmix = len(prior)
+    lik_fn = partial(likelihood_fn, X=X)
+    liks = vmap(lik_fn)(jnp.arange(nmix)) # liks(k,n)=p(X(n,:) | y=k)
+    joint = jnp.einsum('kn,k -> nk', liks, prior) # joint(n,k) = liks(k,n) * prior(k)
+    norm = joint.sum(axis=1) # norm(n)  = sum_k joint(n,k) = p(X(n,:)
+    post = joint / jnp.expand_dims(norm, axis=1) # post(n,k) = p(y = k | xn)
+    return post
+
 class LabelSpace:
     def __init__(self, nclasses, nfactors):
         self.nclasses = nclasses
         self.nfactors = nfactors
 
     def flatten_labels(self, y, a):
-        m = jnp.ravel_multi_index((y, a), (self.nclasses, self.nfactors))
+        # to enable jit compilation, we set mode=clip
+        #https://jax.readthedocs.io/en/latest/_autosummary/jax.numpy.ravel_multi_index.html#jax.numpy.ravel_multi_index
+        m = jnp.ravel_multi_index((y, a), (self.nclasses, self.nfactors), mode='clip')
         return m
 
     def unflatten_labels(self, m):
