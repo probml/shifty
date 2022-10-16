@@ -30,7 +30,7 @@ def run_expt(corr_source=0.3, ntrials=3, sf=3):
 
     ls = LabelSpace(nclasses=2, nfactors=2)
     src_dist = NurdDataGenerator(key, corr_source, ls, sf=sf)
-    def make_dist(rho):
+    def make_dist(key, rho):
         src_dist = NurdDataGenerator(key, rho, ls, sf=sf)
 
     clf = make_logreg()

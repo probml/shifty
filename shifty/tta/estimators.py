@@ -1,3 +1,4 @@
+from einops.einops import ParsedExpression
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.stats
@@ -6,7 +7,6 @@ import matplotlib
 from functools import partial
 from collections import namedtuple
 import dataclasses
-
 
 import jax
 import jax.random as jr
@@ -19,6 +19,7 @@ from copy import deepcopy
 
 from shifty.tta.label_space import *
 from shifty.tta.data_generator import *
+from shifty.tta.metrics import *
 from shifty.skax.skax import *
 
 class OracleEstimator:
@@ -34,6 +35,7 @@ class OracleEstimator:
         self.lik_fn = src_dist.lik_fn
     
     def fit_target(self, X, target_dist):
+        del X
         self.prior_target = target_dist.params.prior
 
     def predict_joint_source(self, X):
@@ -83,6 +85,7 @@ class EMEstimator:
         self.label_space = label_space
         self.lik_fn = []
         self.num_em_iter = num_em_iter
+        self.prior_strength = prior_strength
 
     def fit_source(self, Xs, Ys, As, src_dist):
         del src_dist
@@ -94,8 +97,7 @@ class EMEstimator:
 
     def fit_target(self, X, target_dist):
         del target_dist
-        print('running em')
-        nmix = len(self.prior_target)
+        nmix = len(self.prior_source)
         self.prior_target = em(X, self.prior_source, self.lik_fn, 
             self.num_em_iter, self.prior_strength*jnp.ones(nmix))
     
@@ -121,6 +123,7 @@ class OraclePriorEstimator(EMEstimator):
         super().__init__(classifier, label_space, num_em_iter=None)
 
     def fit_target(self, X, target_dist):
+        del X
         self.prior_target = target_dist.params.prior
 
 
@@ -135,7 +138,6 @@ class UndaptedEstimator:
         self.classifier.fit(Xs, Zs)
     
     def fit_target(self, X, target_dist):
-        del target_dist
         pass
 
     def predict_joint_source(self, X):
@@ -152,22 +154,14 @@ class UndaptedEstimator:
     def predict_class_target(self, X):
         return self.predict_class_source(X)
 
-    
-def evaluate_predictions_accuracy(Ytrue, Yprob):
-  Yhat = jnp.argmax(Yprob, axis=1)
-  nerrors = jnp.sum(Yhat != Ytrue)
-  nsamples = len(Ytrue)
-  return nerrors / nsamples
-
-def evaluate_predictions_mse(class_post_true, class_post_pred):
-  return jnp.mean(jnp.power(class_post_true[:,0] - class_post_pred[:,0], 2))
 
 
-def evaluate_estimator(key, src_dist, corr_targets, estimator, nsource_samples = 500, ntarget_samples=100):
+def evaluate_estimator_single_trial(key, src_dist, corr_targets, estimator, nsource_samples = 500, ntarget_samples=100):
     # compare on a range of target distributions
     Xs, Ys, As = src_dist.sample(key, nsource_samples)
     estimator.fit_source(Xs, Ys, As, src_dist)
     ntargets = len(corr_targets)
+    @jit
     def f(corr):
         target_dist = deepcopy(src_dist)
         target_dist.shift_prior_correlation(corr)
@@ -175,21 +169,48 @@ def evaluate_estimator(key, src_dist, corr_targets, estimator, nsource_samples =
         true_prob = target_dist.predict_class(Xt)
         estimator.fit_target(Xt, target_dist)
         pred_prob = estimator.predict_class_target(Xt)
-        #return evaluate_predictions_accuracy(Yt, pred_prob)
-        loss = evaluate_predictions_mse(true_prob, pred_prob)
-        return loss
-    metrics = vmap(f)(corr_targets)
+        metric1 =  misclassification_rate(Yt, pred_prob)
+        metric2 = mean_squared_error(true_prob, pred_prob)
+        metric3 = 1-roc_auc(Yt, pred_prob[:,1])
+        #metric4 = 1-roc_auc(Yt, pred_prob[:,0]) # wrong 
+        metric = jnp.array([metric1, metric2, metric3])
+        return metric
+    metrics = vmap(f)(corr_targets) # (ntargets, nmetrics)
     return metrics
 
+
 def evaluate_estimator_multi_trial(keys, src_dist, corr_targets, estimator, nsource_samples = 500, ntarget_samples=100):
+    @jit
     def f(key):
-        return evaluate_estimator(key, src_dist, corr_targets, estimator, nsource_samples, ntarget_samples)
-    losses_per_trial = vmap(f)(keys) # (ntrials, ntargets)
-    print(losses_per_trial)
-    losses_mean = jnp.mean(losses_per_trial, axis=0) # (ntargets,)
+        return evaluate_estimator_single_trial(key, src_dist, corr_targets, estimator, nsource_samples, ntarget_samples)
+    losses_per_trial = vmap(f)(keys) # (ntrials, ntargets, nmetrics)
+    losses_mean = jnp.mean(losses_per_trial, axis=0) # (ntargets, nmetrics)
     losses_std = jnp.std(losses_per_trial, axis=0)
     return losses_mean, losses_std
 
+def evaluate_estimator_old(key, make_dist, corr_sources, corr_targets, ntrials, estimator, nsource_samples = 500, ntarget_samples=100):
+    # use different key for every source
+    @jit
+    def f(key, rho):
+        src_dist =  make_dist(key, rho)
+        keys = jr.split(key, ntrials)
+        losses_mean, losses_std = evaluate_estimator_multi_trial(keys, src_dist, corr_targets, estimator, nsource_samples, ntarget_samples)
+        return losses_mean, losses_std # each is size (ntargets, nmetrics)
+    keys = jr.split(key, len(corr_sources))
+    losses_mean, losses_std = vmap(f)(keys, corr_sources) # (nsources, ntargets, nmetrics)
+    return losses_mean, losses_std
+
+def evaluate_estimator(key, make_dist, corr_sources, corr_targets, ntrials, estimator, nsource_samples = 500, ntarget_samples=100):
+    # use same key for every source
+    @jit
+    def f(rho):
+        src_dist =  make_dist(key, rho)
+        keys = jr.split(key, ntrials)
+        losses_mean, losses_std = evaluate_estimator_multi_trial(keys, src_dist, corr_targets, estimator, nsource_samples, ntarget_samples)
+        return losses_mean, losses_std # each is size (ntargets, nmetrics)
+    #keys = jr.split(key, len(corr_sources))
+    losses_mean, losses_std = vmap(f)(corr_sources) # (nsources, ntargets, nmetrics)
+    return losses_mean, losses_std
 
 def make_mlp():
     key = jr.PRNGKey(42)
