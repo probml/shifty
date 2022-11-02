@@ -1,5 +1,5 @@
 # to show output from the 'tests', run with 
-# pytest skax_test.py  -rP
+# pytest skax_test_mlp.py  -rP
 
 from functools import partial
 import matplotlib.pyplot as plt
@@ -29,12 +29,6 @@ import flax
 
 import jaxopt
 import optax
-
-import sklearn.datasets
-import sklearn
-from sklearn.preprocessing import PolynomialFeatures, StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.linear_model import LogisticRegression
 
 from skax import *
 #jax.config.update("jax_enable_x64", True) # jaxopt.lbfgs uses float32

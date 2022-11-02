@@ -78,7 +78,7 @@ class LogRegNetwork(nn.Module):
 
 class LogReg(ClassifierMixin):
     def __init__(self, key, nclasses, *,  l2reg=1e-5,
-                optimizer = 'lbfgs', batch_size=128, max_iter=100, 
+                optimizer = 'lbfgs', batch_size=0, max_iter=500, 
                  W_init=None, b_init=None):
         # optimizer is {'lbfgs', 'polyak', 'armijo'} or an optax object
         self.nclasses = nclasses
@@ -105,23 +105,35 @@ class LogReg(ClassifierMixin):
 
     def fit(self, X, y):
         self.params = self.network.init(self.key, X[0])
-        if isinstance(self.optimizer, str) and (self.optimizer.lower() == "lbfgs"):
+        N = X.shape[0]
+        if (self.batch_size == 0) or (self.batch_size == N):
             return self.fit_batch(self.key, X, y)
         else:
             return self.fit_minibatch(self.key, X, y)
 
     def fit_batch(self, key, X, y):
+        del key
+        # This version is fully deterministic
         sigma = np.sqrt(1/self.l2reg)
-        ntrain = X.shape[0]
+        N = X.shape[0]
         data = {"X": X, "y": y}
         def loss_fn(params):
-            return objective(params=params, data=data,  network=self.network,  prior_sigma=sigma, ntrain=ntrain)
-        solver = jaxopt.LBFGS(fun=loss_fn, maxiter=self.max_iter)
+            return objective(params=params, data=data,  network=self.network,  prior_sigma=sigma, ntrain=N)
+
+        if isinstance(self.optimizer, str) and (self.optimizer.lower() == "lbfgs"):
+            solver = jaxopt.LBFGS(fun=loss_fn, maxiter=self.max_iter)
+        elif isinstance(self.optimizer, str) and (self.optimizer.lower() == "polyak"):
+            solver = jaxopt.PolyakSGD(fun=loss_fn, maxiter=self.max_iter)
+        elif isinstance(self.optimizer, str) and (self.optimizer.lower() == "armijo"):
+            solver = jaxopt.ArmijoSGD(fun=loss_fn, maxiter=self.max_iter)
+        else:
+            solver = OptaxSolver(opt=self.optimizer, fun=loss_fn, maxiter=self.max_iter)
+
         res = solver.run(self.params)
         self.params = res.params
-        self.optimization_results = res
 
     def fit_minibatch(self, key, X, y):
+        del key
         # https://jaxopt.github.io/stable/auto_examples/deep_learning/flax_resnet.html
         # https://github.com/blackjax-devs/blackjax/discussions/360#discussioncomment-3756412
         sigma = np.sqrt(1/self.l2reg)
@@ -138,7 +150,9 @@ class LogReg(ClassifierMixin):
         ds = ds.batch(self.batch_size)
         iterator = ds.as_numpy_iterator()
 
-        if isinstance(self.optimizer, str) and (self.optimizer.lower() == "polyak"):
+        if isinstance(self.optimizer, str) and (self.optimizer.lower() == "lbfgs"):
+            solver = jaxopt.LBFGS(fun=loss_fn, maxiter=self.max_iter)
+        elif isinstance(self.optimizer, str) and (self.optimizer.lower() == "polyak"):
             solver = jaxopt.PolyakSGD(fun=loss_fn, maxiter=self.max_iter)
         elif isinstance(self.optimizer, str) and (self.optimizer.lower() == "armijo"):
             solver = jaxopt.ArmijoSGD(fun=loss_fn, maxiter=self.max_iter)
