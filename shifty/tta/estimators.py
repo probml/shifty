@@ -78,8 +78,9 @@ def classifier_to_lik_fn(classifier, prior):
     return lik_fn
 
 class EMEstimator:
-    def __init__(self, classifier, label_space, num_em_iter=5, prior_strength=0.01):
-        self.classifier = deepcopy(classifier)
+    def __init__(self, make_classifier, label_space, num_em_iter=5, prior_strength=0.01):
+        #self.classifier = deepcopy(classifier)
+        self.classifier = make_classifier(ntargets = label_space.nclasses * label_space.nfactors)
         self.prior_source = []
         self.prior_target = []
         self.label_space = label_space
@@ -127,9 +128,10 @@ class OraclePriorEstimator(EMEstimator):
         self.prior_target = target_dist.params.prior
 
 
-class UndaptedEstimator:
-    def __init__(self, classifier, label_space):
-        self.classifier = deepcopy(classifier)
+class UndaptedEstimatorJoint:
+    def __init__(self, make_classifier, label_space):
+        #self.classifier = deepcopy(classifier)
+        self.classifier = make_classifier(ntargets = label_space.nclasses * label_space.nfactors)
         self.label_space = label_space
 
     def fit_source(self, Xs, Ys, As, src_dist):
@@ -154,6 +156,35 @@ class UndaptedEstimator:
     def predict_class_target(self, X):
         return self.predict_class_source(X)
 
+class UndaptedEstimator:
+    def __init__(self, make_classifier, label_space):
+        self.classifier = make_classifier(ntargets = label_space.nclasses)
+        #self.classifier = deepcopy(classifier)
+        self.label_space = label_space
+
+    def fit_source(self, Xs, Ys, As, src_dist):
+        del src_dist
+        #Zs = self.label_space.flatten_labels(Ys, As)
+        self.classifier.fit(Xs, Ys)
+    
+    def fit_target(self, X, target_dist):
+        pass
+
+    #def predict_joint_source(self, X):
+    #    pass
+    #return self.classifier.predict(X)
+
+    def predict_class_source(self, X):
+        #zpost = self.predict_joint_source(X)
+        #ypost, apost = self.label_space.unflatten_dist(zpost)
+        ypost = self.classifier.predict(X)
+        return ypost 
+
+    #def predict_joint_target(self, X):
+    #    return self.predict_joint_source(X)
+
+    def predict_class_target(self, X):
+        return self.predict_class_source(X)
 
 
 def evaluate_estimator_single_trial(key, src_dist, corr_targets, estimator, nsource_samples = 500, ntarget_samples=100):
@@ -170,10 +201,9 @@ def evaluate_estimator_single_trial(key, src_dist, corr_targets, estimator, nsou
         estimator.fit_target(Xt, target_dist)
         pred_prob = estimator.predict_class_target(Xt)
         metric1 =  misclassification_rate(Yt, pred_prob)
-        metric2 = mean_squared_error(true_prob, pred_prob)
-        metric3 = 1-roc_auc(Yt, pred_prob[:,1])
-        #metric4 = 1-roc_auc(Yt, pred_prob[:,0]) # wrong 
-        metric = jnp.array([metric1, metric2, metric3])
+        metric2 = 1-roc_auc(Yt, pred_prob[:,1])
+        #metric3 = mean_squared_error(true_prob, pred_prob)
+        metric = jnp.array([metric1, metric2])
         return metric
     metrics = vmap(f)(corr_targets) # (ntargets, nmetrics)
     return metrics
@@ -188,17 +218,6 @@ def evaluate_estimator_multi_trial(keys, src_dist, corr_targets, estimator, nsou
     losses_std = jnp.std(losses_per_trial, axis=0)
     return losses_mean, losses_std
 
-def evaluate_estimator_old(key, make_dist, corr_sources, corr_targets, ntrials, estimator, nsource_samples = 500, ntarget_samples=100):
-    # use different key for every source
-    @jit
-    def f(key, rho):
-        src_dist =  make_dist(key, rho)
-        keys = jr.split(key, ntrials)
-        losses_mean, losses_std = evaluate_estimator_multi_trial(keys, src_dist, corr_targets, estimator, nsource_samples, ntarget_samples)
-        return losses_mean, losses_std # each is size (ntargets, nmetrics)
-    keys = jr.split(key, len(corr_sources))
-    losses_mean, losses_std = vmap(f)(keys, corr_sources) # (nsources, ntargets, nmetrics)
-    return losses_mean, losses_std
 
 def evaluate_estimator(key, make_dist, corr_sources, corr_targets, ntrials, estimator, nsource_samples = 500, ntarget_samples=100):
     # use same key for every source
@@ -212,20 +231,20 @@ def evaluate_estimator(key, make_dist, corr_sources, corr_targets, ntrials, esti
     losses_mean, losses_std = vmap(f)(corr_sources) # (nsources, ntargets, nmetrics)
     return losses_mean, losses_std
 
-def make_mlp():
+def make_mlp(ntargets):
     key = jr.PRNGKey(42)
-    ntargets = 4
+    #ntargets = 4
     nhidden =  (10, 10, ntargets)
     network = MLPNetwork(nhidden)
     model = NeuralNetClassifier(network, key, ntargets, l2reg=1e-2, optimizer = "adam+warmup", 
             batch_size=32, num_epochs=20, print_every=0)
     return model
 
-def make_logreg():
+def make_logreg(ntargets):
     key = jr.PRNGKey(42)
-    ntargets = 4
+    #ntargets = 4
     nhidden =  (ntargets,)
     network = MLPNetwork(nhidden)
     model = NeuralNetClassifier(network, key, ntargets,
-        l2reg=1e-5, standardize=True, max_iter=500, optimizer = "lbfgs")
+        l2reg=1e-2, standardize=True, max_iter=500, optimizer = "lbfgs")
     return model

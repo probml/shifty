@@ -43,7 +43,8 @@ def true_false_positive(y_pred, y_test):
 def roc(y_test, probabilities):
     ''' Same as sklearn.metrics.roc_curve '''
     # set thresholds big to small, so that tpr gradually increases
-    thresholds = jnp.linspace(0.99, 0.01, num=200)
+    # More complex strategy is here: https://github.com/scikit-learn/scikit-learn/blob/36958fb24/sklearn/metrics/_ranking.py#L892
+    thresholds = jnp.linspace(1, 1e-5, num=500)
     #probs = jnp.unique(probabilities) # variable-sized, does not jit compile
     #thresholds = jnp.concatenate([jnp.array([0.01]), probs, jnp.array([0.99])])
     #thresholds = jnp.flip(thresholds)

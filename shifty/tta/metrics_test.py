@@ -10,6 +10,10 @@ import matplotlib.pyplot as plt
 
 from shifty.tta.metrics  import *
 
+def print_probs(probs):
+    str = ['{:0.3f}'.format(p) for p in probs]
+    print(str)
+    
 def test_roc():
     # from https://towardsdatascience.com/roc-curve-and-auc-from-scratch-in-numpy-visualized-2612bb9459ab
     X, y = make_classification(n_samples=100, n_informative=10, n_features=20, flip_y=0.2)
