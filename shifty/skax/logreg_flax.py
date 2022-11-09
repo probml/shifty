@@ -1,3 +1,6 @@
+# Logistic regression using flax, optax and jaxopt
+# Since the objective is convex, we should be able to get good results using
+# BFGS or first order methods with automatic (Armijo) step size tuning.
 
 from functools import partial
 import matplotlib.pyplot as plt
